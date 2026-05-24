@@ -1,0 +1,71 @@
+name: Otomoto Watcher
+
+on:
+  schedule:
+    # Запуск каждые 15 минут. GitHub может запустить с задержкой 5-10 минут
+    # при высокой нагрузке — это нормально для бесплатных репо.
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      seed_only:
+        description: "Только запомнить текущие объявления, не отправлять сообщения"
+        required: false
+        default: "false"
+
+concurrency:
+  group: otomoto-watcher
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run watcher
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          OTOMOTO_SEARCH_URLS: ${{ vars.OTOMOTO_SEARCH_URLS }}
+          MAX_AGE_HOURS: ${{ vars.MAX_AGE_HOURS || '24' }}
+          SEED_ONLY: ${{ inputs.seed_only || 'false' }}
+        run: python main.py
+
+      - name: Commit updated state
+        run: |
+          set -e
+          if [[ -z "$(git status --porcelain state.json)" ]]; then
+            echo "state.json не изменился — коммит не нужен"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state.json
+          git commit -m "chore: update seen listings state [skip ci]"
+          # Если кто-то параллельно запушил — повторим
+          for attempt in 1 2 3; do
+            if git push; then
+              exit 0
+            fi
+            echo "push failed (attempt $attempt), pulling and retrying..."
+            git pull --rebase --autostash
+          done
+          exit 1
