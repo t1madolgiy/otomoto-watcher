@@ -57,7 +57,8 @@ def run(config: AppConfig) -> int:
         except Exception as exc:
             log.error("Failed to fetch %s: %s", search_url, exc)
             continue
-        listings = listings[: config.max_listings_per_run]
+        if config.max_listings_per_run > 0:
+            listings = listings[: config.max_listings_per_run]
         fresh = filter_new(listings, seen)
         log.info(
             "URL %s: %d total, %d new (before age filter)",

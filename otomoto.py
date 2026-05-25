@@ -83,24 +83,30 @@ def _escape(text: str) -> str:
 
 
 def fetch_listings(
-    search_url: str, *, max_pages: int = 1, timeout: int = 20, delay_sec: float = 0.5
+    search_url: str,
+    *,
+    max_pages: int | None = 0,
+    timeout: int = 20,
+    delay_sec: float = 0.3,
+    safety_max_pages: int = 100,
 ) -> list[Listing]:
-    """Загрузить и распарсить ``max_pages`` страниц поиска Otomoto.
+    """Загрузить страницы поиска Otomoto.
+
+    ``max_pages``:
+      - ``0`` (по умолчанию) — сканировать **все** страницы до конца списка;
+      - ``N > 0`` — не больше N страниц (для ручного ограничения).
 
     Otomoto ставит платные объявления (Wyróżnione) в верх списка независимо
-    от сортировки. Поэтому новое обычное объявление может оказаться не
-    на первой странице, а на 2-3. Чтобы их ловить, сканируем глубже.
-
-    Между запросами небольшая пауза ``delay_sec`` — чтобы не выглядеть
-    подозрительно быстрым клиентом.
+    от сортировки. Новое обычное объявление может оказаться глубоко внизу,
+    поэтому по умолчанию идём до последней страницы.
     """
-    if max_pages < 1:
-        max_pages = 1
+    scan_all = max_pages is None or max_pages <= 0
+    page_limit = safety_max_pages if scan_all else max(1, max_pages)
 
     all_listings: list[Listing] = []
     seen_ids: set[str] = set()
 
-    for page_num in range(1, max_pages + 1):
+    for page_num in range(1, page_limit + 1):
         page_url = _with_page(search_url, page_num)
         page_listings = _fetch_single_page(page_url, timeout=timeout)
         new_on_this_page = 0
@@ -111,13 +117,24 @@ def fetch_listings(
             all_listings.append(listing)
             new_on_this_page += 1
         log.info("Page %d: %d listings (+%d new)", page_num, len(page_listings), new_on_this_page)
-        # Если страница вернула меньше 32 объявлений — дальше идти бессмысленно
-        if len(page_listings) < 32:
-            log.info("Page %d had fewer than 32 listings, stopping pagination", page_num)
+
+        if not page_listings:
+            log.info("Page %d is empty, stopping pagination", page_num)
             break
-        if page_num < max_pages and delay_sec > 0:
+        if len(page_listings) < 32:
+            log.info("Page %d is the last page (<32 listings), stopping", page_num)
+            break
+        if not scan_all and page_num >= page_limit:
+            break
+        if scan_all and page_num >= safety_max_pages:
+            log.warning(
+                "Reached safety cap of %d pages, stopping pagination", safety_max_pages
+            )
+            break
+        if delay_sec > 0:
             time.sleep(delay_sec)
 
+    log.info("Fetched %d unique listings across %d page(s)", len(all_listings), page_num)
     return all_listings
 
 
