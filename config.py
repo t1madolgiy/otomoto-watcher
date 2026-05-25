@@ -18,10 +18,11 @@ class TelegramConfig:
 class AppConfig:
     search_urls: list[str]
     telegram: TelegramConfig
-    max_listings_per_run: int = 32
+    max_listings_per_run: int = 96
     max_age_hours: int = 24
     seed_only: bool = False
     state_path: Path = field(default_factory=lambda: Path("state.json"))
+    max_pages: int = 3
 
 
 def load_config(path: str | os.PathLike[str] | None = None) -> AppConfig:
@@ -63,7 +64,12 @@ def load_config(path: str | os.PathLike[str] | None = None) -> AppConfig:
     max_listings = int(
         os.environ.get("MAX_LISTINGS_PER_RUN")
         or data.get("max_listings_per_run")
-        or 32
+        or 96
+    )
+    max_pages = int(
+        os.environ.get("MAX_PAGES")
+        or data.get("max_pages")
+        or 3
     )
     max_age_hours = int(
         os.environ.get("MAX_AGE_HOURS")
@@ -83,4 +89,5 @@ def load_config(path: str | os.PathLike[str] | None = None) -> AppConfig:
         max_age_hours=max_age_hours,
         seed_only=seed_only,
         state_path=Path(os.environ.get("STATE_PATH") or "state.json"),
+        max_pages=max_pages,
     )

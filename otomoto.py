@@ -9,9 +9,11 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Iterable
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -80,8 +82,57 @@ def _escape(text: str) -> str:
     )
 
 
-def fetch_listings(search_url: str, *, timeout: int = 20) -> list[Listing]:
-    """Загрузить и распарсить страницу поиска Otomoto."""
+def fetch_listings(
+    search_url: str, *, max_pages: int = 1, timeout: int = 20, delay_sec: float = 0.5
+) -> list[Listing]:
+    """Загрузить и распарсить ``max_pages`` страниц поиска Otomoto.
+
+    Otomoto ставит платные объявления (Wyróżnione) в верх списка независимо
+    от сортировки. Поэтому новое обычное объявление может оказаться не
+    на первой странице, а на 2-3. Чтобы их ловить, сканируем глубже.
+
+    Между запросами небольшая пауза ``delay_sec`` — чтобы не выглядеть
+    подозрительно быстрым клиентом.
+    """
+    if max_pages < 1:
+        max_pages = 1
+
+    all_listings: list[Listing] = []
+    seen_ids: set[str] = set()
+
+    for page_num in range(1, max_pages + 1):
+        page_url = _with_page(search_url, page_num)
+        page_listings = _fetch_single_page(page_url, timeout=timeout)
+        new_on_this_page = 0
+        for listing in page_listings:
+            if listing.id in seen_ids:
+                continue
+            seen_ids.add(listing.id)
+            all_listings.append(listing)
+            new_on_this_page += 1
+        log.info("Page %d: %d listings (+%d new)", page_num, len(page_listings), new_on_this_page)
+        # Если страница вернула меньше 32 объявлений — дальше идти бессмысленно
+        if len(page_listings) < 32:
+            log.info("Page %d had fewer than 32 listings, stopping pagination", page_num)
+            break
+        if page_num < max_pages and delay_sec > 0:
+            time.sleep(delay_sec)
+
+    return all_listings
+
+
+def _with_page(url: str, page: int) -> str:
+    """Подставить (или заменить) параметр ``page`` в URL."""
+    parsed = urlparse(url)
+    params = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    if page > 1:
+        params["page"] = str(page)
+    else:
+        params.pop("page", None)
+    return urlunparse(parsed._replace(query=urlencode(params)))
+
+
+def _fetch_single_page(search_url: str, *, timeout: int = 20) -> list[Listing]:
     log.info("Fetching %s", search_url)
     resp = requests.get(search_url, headers=DEFAULT_HEADERS, timeout=timeout)
     resp.raise_for_status()

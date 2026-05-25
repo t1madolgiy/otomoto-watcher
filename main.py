@@ -53,7 +53,7 @@ def run(config: AppConfig) -> int:
 
     for search_url in config.search_urls:
         try:
-            listings = fetch_listings(search_url)
+            listings = fetch_listings(search_url, max_pages=config.max_pages)
         except Exception as exc:
             log.error("Failed to fetch %s: %s", search_url, exc)
             continue
